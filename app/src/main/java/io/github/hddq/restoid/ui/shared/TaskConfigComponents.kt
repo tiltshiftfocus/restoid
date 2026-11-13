@@ -120,6 +120,7 @@ import io.github.hddq.restoid.work.ExclusionConflict
 import io.github.hddq.restoid.ui.components.ExpressiveCardGroup
 import io.github.hddq.restoid.ui.components.ExpressiveSectionHeader
 import io.github.hddq.restoid.ui.components.ExpressiveSegmentedSurface
+import io.github.hddq.restoid.ui.components.SortableSectionHeader
 import coil.compose.AsyncImage
 import kotlin.math.roundToInt
 
@@ -573,6 +574,8 @@ fun BackupConfigScreen(
     apps: List<AppInfo>,
     appBackupTypes: Map<String, BackupTypes>,
     backupTypes: BackupTypes,
+    sortOrder: AppSortOrder,
+    onSortOrderChange: (AppSortOrder) -> Unit,
     onRefreshApps: () -> Unit,
     onToggleAllApps: () -> Unit,
     onToggleAppSelection: (String) -> Unit,
@@ -626,7 +629,12 @@ fun BackupConfigScreen(
         } else {
             val totalRows = apps.size + 1
             item(key = "header", contentType = "header") {
-                ExpressiveSectionHeader(title = stringResource(R.string.apps_title))
+                SortableSectionHeader(
+                    title = stringResource(R.string.apps_title),
+                    sortOrder = sortOrder,
+                    onSortOrderChange = onSortOrderChange,
+                    showSizeSort = false
+                )
             }
             item(key = "select_all", contentType = "select_all") {
                 ExpressiveSegmentedSurface(index = 0, count = totalRows) {
