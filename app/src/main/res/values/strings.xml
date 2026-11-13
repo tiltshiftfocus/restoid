@@ -68,6 +68,9 @@
     <string name="restore_options_title">Restore Options</string>
     <string name="allow_downgrade">Allow Downgrade</string>
     <string name="apps_to_restore_title">Apps to Restore</string>
+    <string name="search_apps">Search apps</string>
+    <string name="cd_clear_search">Clear search</string>
+    <string name="no_apps_match_search">No apps match your search.</string>
     <string name="no_app_data_found_in_snapshot">No app data found in this snapshot.</string>
     <string name="restore_backup_version_with_installed">Backup: %1$s -&gt; Installed: %2$s</string>
     <string name="restore_backup_version_only">Backup: %1$s</string>
