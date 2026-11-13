@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Contacts
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.History
@@ -42,6 +43,7 @@ import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.PermMedia
 import androidx.compose.material.icons.outlined.SdCard
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Smartphone
 import androidx.compose.material.icons.outlined.Storage
@@ -369,7 +371,20 @@ fun RestoreAppsConfigScreen(
     val isAllSelected = selectableBackupDetails.isNotEmpty() && selectableBackupDetails.all { it.appInfo.isSelected }
     var selectedAppPackageName by remember { mutableStateOf<String?>(null) }
     var showBulkRestoreTypesSheet by remember { mutableStateOf(false) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
     val context = LocalContext.current
+
+    val filteredBackupDetails = remember(backupDetails, searchQuery) {
+        val query = searchQuery.trim()
+        if (query.isEmpty()) {
+            backupDetails
+        } else {
+            backupDetails.filter { detail ->
+                detail.appInfo.name.contains(query, ignoreCase = true) ||
+                    detail.appInfo.packageName.contains(query, ignoreCase = true)
+            }
+        }
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -402,29 +417,64 @@ fun RestoreAppsConfigScreen(
                 )
             }
         } else {
-            val totalAppRows = backupDetails.size + 1
+            item(key = "apps_search") {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text(stringResource(R.string.search_apps)) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Outlined.Search,
+                            contentDescription = null
+                        )
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Close,
+                                    contentDescription = stringResource(R.string.cd_clear_search)
+                                )
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
             item(key = "apps_header") {
                 ExpressiveSectionHeader(title = stringResource(R.string.apps_to_restore_title))
             }
-            item(key = "apps_select_all") {
-                io.github.hddq.restoid.ui.shared.SelectAllListItem(
-                    isChecked = isAllSelected,
-                    subtitle = buildSelectedRestoreTypesSummary(selectableBackupDetails, appRestoreTypes, restoreTypes, context),
-                    onClick = { showBulkRestoreTypesSheet = true },
-                    onToggle = viewModel::toggleAllRestoreSelection,
-                    shapes = ListItemDefaults.segmentedShapes(index = 0, count = totalAppRows)
-                )
-            }
-            itemsIndexed(backupDetails, key = { _, detail -> detail.appInfo.packageName }) { index, detail ->
-                RestoreAppListItem(
-                    detail = detail,
-                    allowDowngrade = allowDowngrade,
-                    restoreTypes = appRestoreTypes[detail.appInfo.packageName] ?: restoreTypes,
-                    onClick = { selectedAppPackageName = detail.appInfo.packageName },
-                    onToggle = { viewModel.toggleRestoreAppSelection(detail.appInfo.packageName) },
-                    shapes = ListItemDefaults.segmentedShapes(index = index + 1, count = totalAppRows),
-                    modifier = Modifier.animateItem()
-                )
+            if (filteredBackupDetails.isEmpty()) {
+                if (searchQuery.isNotBlank()) {
+                    item(key = "apps_no_results") {
+                        Text(
+                            stringResource(R.string.no_apps_match_search),
+                            modifier = Modifier.padding(16.dp)
+                        )
+                    }
+                }
+            } else {
+                item(key = "apps_select_all") {
+                    io.github.hddq.restoid.ui.shared.SelectAllListItem(
+                        isChecked = isAllSelected,
+                        subtitle = buildSelectedRestoreTypesSummary(selectableBackupDetails, appRestoreTypes, restoreTypes, context),
+                        onClick = { showBulkRestoreTypesSheet = true },
+                        onToggle = viewModel::toggleAllRestoreSelection,
+                        shapes = ListItemDefaults.segmentedShapes(index = 0, count = totalAppRows)
+                    )
+                }
+                itemsIndexed(backupDetails, key = { _, detail -> detail.appInfo.packageName }) { index, detail ->
+                    RestoreAppListItem(
+                        detail = detail,
+                        allowDowngrade = allowDowngrade,
+                        restoreTypes = appRestoreTypes[detail.appInfo.packageName] ?: restoreTypes,
+                        onClick = { selectedAppPackageName = detail.appInfo.packageName },
+                        onToggle = { viewModel.toggleRestoreAppSelection(detail.appInfo.packageName) },
+                        shapes = ListItemDefaults.segmentedShapes(index = index + 1, count = totalAppRows),
+                        modifier = Modifier.animateItem()
+                    )
+                }
             }
         }
     }
