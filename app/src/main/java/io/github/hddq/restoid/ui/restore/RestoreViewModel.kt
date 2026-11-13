@@ -18,6 +18,8 @@ import io.github.hddq.restoid.model.CustomDirectoryMetadata
 import io.github.hddq.restoid.model.RestoidMetadata
 import io.github.hddq.restoid.ui.shared.AppSortOrder
 import io.github.hddq.restoid.ui.shared.OperationProgress
+import io.github.hddq.restoid.ui.shared.backedUpItemLabels
+import io.github.hddq.restoid.ui.shared.buildBackedUpItemsIndex
 import io.github.hddq.restoid.ui.shared.sortBackupDetails
 import io.github.hddq.restoid.work.OperationWorkRepository
 import io.github.hddq.restoid.work.RestoreAppSelection
@@ -33,6 +35,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Serializable
 data class RestoreTypes(
@@ -248,43 +251,49 @@ class RestoreViewModel(
 
     private suspend fun processSnapshot(snapshot: SnapshotInfo, metadata: RestoidMetadata?) {
         val appMetadataMap = metadata?.apps ?: emptyMap()
-        val packageNames = appMetadataMap.keys.toList().filter { it != application.packageName }
+        val packageNames = appMetadataMap.keys.filter { it != application.packageName }
 
         if (packageNames.isNotEmpty()) {
             val appInfos = appInfoRepository.getAppInfoForPackages(packageNames)
             val appInfoMap = appInfos.associateBy { it.packageName }
 
-            val details = appMetadataMap.filterKeys { it != application.packageName }.map { (packageName, appMeta) ->
-                val appInfo = appInfoMap[packageName]
-                val items = findBackedUpItems(
-                    snapshot = snapshot,
-                    pkg = packageName,
-                    hasPermissionBackup = appMeta.grantedRuntimePermissions.isNotEmpty(),
-                    hasSpecialAccessBackup = appMeta.hasSpecialAccessBackup(),
-                    hasAccessibilityBackup = appMeta.hasAccessibilityBackup()
-                )
+            // CPU bound: one pass over the snapshot paths plus sorting is done off the main thread
+            // so that large snapshots do not freeze the list.
+            val details = withContext(Dispatchers.Default) {
+                val backedUpItemsIndex = buildBackedUpItemsIndex(snapshot)
+                packageNames.map { packageName ->
+                    val appMeta = appMetadataMap.getValue(packageName)
+                    val appInfo = appInfoMap[packageName]
+                    val items = backedUpItemLabels(
+                        resolveLabel = application::getString,
+                        types = backedUpItemsIndex[packageName],
+                        hasPermissionBackup = appMeta.grantedRuntimePermissions.isNotEmpty(),
+                        hasSpecialAccessBackup = appMeta.hasSpecialAccessBackup(),
+                        hasAccessibilityBackup = appMeta.hasAccessibilityBackup()
+                    )
 
-                val isInstalled = appInfo != null
-                val isDowngrade = if (isInstalled) {
-                    appMeta.versionCode < appInfo.versionCode
-                } else {
-                    false
-                }
+                    val isInstalled = appInfo != null
+                    val isDowngrade = if (isInstalled) {
+                        appMeta.versionCode < appInfo.versionCode
+                    } else {
+                        false
+                    }
 
-                val finalAppInfo = appInfo ?: AppInfo(
-                    name = appMeta.appName ?: packageName,
-                    packageName = packageName,
-                    versionName = appMeta.versionName,
-                    versionCode = appMeta.versionCode,
-                    icon = application.packageManager.defaultActivityIcon,
-                    apkPaths = emptyList(),
-                    isSelected = true
-                )
+                    val finalAppInfo = appInfo ?: AppInfo(
+                        name = appMeta.appName ?: packageName,
+                        packageName = packageName,
+                        versionName = appMeta.versionName,
+                        versionCode = appMeta.versionCode,
+                        icon = application.packageManager.defaultActivityIcon,
+                        apkPaths = emptyList(),
+                        isSelected = true
+                    )
 
-                BackupDetail(finalAppInfo, items, appMeta.versionName, appMeta.versionCode, appMeta.size, isDowngrade, isInstalled)
+                    BackupDetail(finalAppInfo, items, appMeta.versionName, appMeta.versionCode, appMeta.size, isDowngrade, isInstalled)
+                }.let { sortBackupDetails(it, _sortOrder.value) }
             }
 
-            _backupDetails.value = sortBackupDetails(details, _sortOrder.value)
+            _backupDetails.value = details
             _appRestoreTypes.value = details.associate { detail ->
                 detail.appInfo.packageName to (_appRestoreTypes.value[detail.appInfo.packageName] ?: _restoreTypes.value)
             }
@@ -313,36 +322,6 @@ class RestoreViewModel(
 
     fun setRestoreCustomDirectoriesEnabled(enabled: Boolean) {
         _restoreCustomDirectoriesEnabled.value = enabled
-    }
-
-    private fun findBackedUpItems(
-        snapshot: SnapshotInfo,
-        pkg: String,
-        hasPermissionBackup: Boolean,
-        hasSpecialAccessBackup: Boolean,
-        hasAccessibilityBackup: Boolean
-    ): List<String> {
-        val items = mutableListOf<String>()
-        snapshot.paths.forEach { path ->
-            when {
-                (path.startsWith("/data/app/") && path.contains("/${pkg}-")) -> if (!items.contains(application.getString(R.string.backup_type_apk))) items.add(application.getString(R.string.backup_type_apk))
-                path == "/data/data/$pkg" || path.matches(Regex("^/data/user/\\d+/${Regex.escape(pkg)}$")) -> if (!items.contains(application.getString(R.string.backup_type_data))) items.add(application.getString(R.string.backup_type_data))
-                path.matches(Regex("^/data/user_de/\\d+/${Regex.escape(pkg)}$")) -> if (!items.contains(application.getString(R.string.backup_type_device_protected_data))) items.add(application.getString(R.string.backup_type_device_protected_data))
-                path.matches(Regex("^/storage/emulated/\\d+/Android/data/${Regex.escape(pkg)}$")) -> if (!items.contains(application.getString(R.string.backup_type_external_data))) items.add(application.getString(R.string.backup_type_external_data))
-                path.matches(Regex("^/storage/emulated/\\d+/Android/obb/${Regex.escape(pkg)}$")) -> if (!items.contains(application.getString(R.string.backup_item_obb))) items.add(application.getString(R.string.backup_item_obb))
-                path.matches(Regex("^/storage/emulated/\\d+/Android/media/${Regex.escape(pkg)}$")) -> if (!items.contains(application.getString(R.string.backup_item_media))) items.add(application.getString(R.string.backup_item_media))
-            }
-        }
-        if (hasPermissionBackup && !items.contains(application.getString(R.string.backup_item_permissions))) {
-            items.add(application.getString(R.string.backup_item_permissions))
-        }
-        if (hasSpecialAccessBackup && !items.contains(application.getString(R.string.backup_item_special_access))) {
-            items.add(application.getString(R.string.backup_item_special_access))
-        }
-        if (hasAccessibilityBackup && !items.contains(application.getString(R.string.backup_item_accessibility))) {
-            items.add(application.getString(R.string.backup_item_accessibility))
-        }
-        return if (items.isNotEmpty()) items else listOf(application.getString(R.string.backup_item_unknown))
     }
 
     fun startRestore() {

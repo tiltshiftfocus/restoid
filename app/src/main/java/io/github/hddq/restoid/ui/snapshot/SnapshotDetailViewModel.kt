@@ -13,12 +13,16 @@ import io.github.hddq.restoid.model.AppInfo
 import io.github.hddq.restoid.model.BackupDetail
 import io.github.hddq.restoid.model.RestoidMetadata
 import io.github.hddq.restoid.ui.shared.AppSortOrder
+import io.github.hddq.restoid.ui.shared.backedUpItemLabels
+import io.github.hddq.restoid.ui.shared.buildBackedUpItemsIndex
 import io.github.hddq.restoid.ui.shared.sortBackupDetails
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 sealed class ForgetResult {
     object Idle : ForgetResult()
@@ -166,37 +170,42 @@ class SnapshotDetailsViewModel(
         val appInfos = appInfoRepository.getAppInfoForPackages(packageNames)
         val appInfoMap = appInfos.associateBy { it.packageName }
 
-        val details = appMetadataMap.map { (packageName, appMeta) ->
-            val appInfo = appInfoMap[packageName]
-            val items = findBackedUpItems(
-                snapshot = snapshot,
-                pkg = packageName,
-                hasPermissionBackup = appMeta.grantedRuntimePermissions.isNotEmpty(),
-                hasSpecialAccessBackup = appMeta.hasSpecialAccessBackup(),
-                hasAccessibilityBackup = appMeta.hasAccessibilityBackup()
-            )
+        // Building the list is CPU bound: it scans every path of the snapshot and sorts the
+        // result. Doing it on Dispatchers.Main freezes the screen for large snapshots.
+        val details = withContext(Dispatchers.Default) {
+            val backedUpItemsIndex = buildBackedUpItemsIndex(snapshot)
+            appMetadataMap.map { (packageName, appMeta) ->
+                val appInfo = appInfoMap[packageName]
+                val items = backedUpItemLabels(
+                    resolveLabel = application::getString,
+                    types = backedUpItemsIndex[packageName],
+                    hasPermissionBackup = appMeta.grantedRuntimePermissions.isNotEmpty(),
+                    hasSpecialAccessBackup = appMeta.hasSpecialAccessBackup(),
+                    hasAccessibilityBackup = appMeta.hasAccessibilityBackup()
+                )
 
-            val isInstalled = appInfo != null
-            val isDowngrade = if (isInstalled) {
-                appMeta.versionCode < appInfo.versionCode
-            } else {
-                false
-            }
+                val isInstalled = appInfo != null
+                val isDowngrade = if (isInstalled) {
+                    appMeta.versionCode < appInfo.versionCode
+                } else {
+                    false
+                }
 
-            val finalAppInfo = appInfo ?: AppInfo(
-                name = appMeta.appName ?: packageName,
-                packageName = packageName,
-                versionName = appMeta.versionName,
-                versionCode = appMeta.versionCode,
-                icon = application.packageManager.defaultActivityIcon,
-                apkPaths = emptyList(),
-                isSelected = true
-            )
+                val finalAppInfo = appInfo ?: AppInfo(
+                    name = appMeta.appName ?: packageName,
+                    packageName = packageName,
+                    versionName = appMeta.versionName,
+                    versionCode = appMeta.versionCode,
+                    icon = application.packageManager.defaultActivityIcon,
+                    apkPaths = emptyList(),
+                    isSelected = true
+                )
 
-            BackupDetail(finalAppInfo, items, appMeta.versionName, appMeta.versionCode, appMeta.size, isDowngrade, isInstalled, appMeta.detailedSizes)
+                BackupDetail(finalAppInfo, items, appMeta.versionName, appMeta.versionCode, appMeta.size, isDowngrade, isInstalled, appMeta.detailedSizes)
+            }.let { sortBackupDetails(it, _sortOrder.value) }
         }
 
-        _backupDetails.value = sortBackupDetails(details, _sortOrder.value)
+        _backupDetails.value = details
     }
 
     fun setSortOrder(order: AppSortOrder) {
@@ -204,36 +213,6 @@ class SnapshotDetailsViewModel(
 
         _sortOrder.value = order
         _backupDetails.update { details -> sortBackupDetails(details, order) }
-    }
-
-    private fun findBackedUpItems(
-        snapshot: SnapshotInfo,
-        pkg: String,
-        hasPermissionBackup: Boolean,
-        hasSpecialAccessBackup: Boolean,
-        hasAccessibilityBackup: Boolean
-    ): List<String> {
-        val items = mutableListOf<String>()
-        snapshot.paths.forEach { path ->
-            when {
-                (path.startsWith("/data/app/") && path.contains("/${pkg}-")) -> if (!items.contains(application.getString(R.string.backup_type_apk))) items.add(application.getString(R.string.backup_type_apk))
-                path == "/data/data/$pkg" || path.matches(Regex("^/data/user/\\d+/${Regex.escape(pkg)}$")) -> if (!items.contains(application.getString(R.string.backup_type_data))) items.add(application.getString(R.string.backup_type_data))
-                path.matches(Regex("^/data/user_de/\\d+/${Regex.escape(pkg)}$")) -> if (!items.contains(application.getString(R.string.backup_type_device_protected_data))) items.add(application.getString(R.string.backup_type_device_protected_data))
-                path.matches(Regex("^/storage/emulated/\\d+/Android/data/${Regex.escape(pkg)}$")) -> if (!items.contains(application.getString(R.string.backup_type_external_data))) items.add(application.getString(R.string.backup_type_external_data))
-                path.matches(Regex("^/storage/emulated/\\d+/Android/obb/${Regex.escape(pkg)}$")) -> if (!items.contains(application.getString(R.string.backup_item_obb))) items.add(application.getString(R.string.backup_item_obb))
-                path.matches(Regex("^/storage/emulated/\\d+/Android/media/${Regex.escape(pkg)}$")) -> if (!items.contains(application.getString(R.string.backup_item_media))) items.add(application.getString(R.string.backup_item_media))
-            }
-        }
-        if (hasPermissionBackup && !items.contains(application.getString(R.string.backup_item_permissions))) {
-            items.add(application.getString(R.string.backup_item_permissions))
-        }
-        if (hasSpecialAccessBackup && !items.contains(application.getString(R.string.backup_item_special_access))) {
-            items.add(application.getString(R.string.backup_item_special_access))
-        }
-        if (hasAccessibilityBackup && !items.contains(application.getString(R.string.backup_item_accessibility))) {
-            items.add(application.getString(R.string.backup_item_accessibility))
-        }
-        return if (items.isNotEmpty()) items else listOf(application.getString(R.string.backup_item_unknown))
     }
 
 
