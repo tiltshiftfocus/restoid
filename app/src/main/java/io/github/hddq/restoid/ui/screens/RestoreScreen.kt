@@ -29,6 +29,7 @@ import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.Android
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.History
@@ -36,15 +37,18 @@ import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.PermMedia
 import androidx.compose.material.icons.outlined.SdCard
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -55,6 +59,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -193,7 +198,20 @@ fun RestoreAppsConfigScreen(
     val isAllSelected = selectableBackupDetails.isNotEmpty() && selectableBackupDetails.all { it.appInfo.isSelected }
     var selectedAppPackageName by remember { mutableStateOf<String?>(null) }
     var showBulkRestoreTypesSheet by remember { mutableStateOf(false) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
     val context = LocalContext.current
+
+    val filteredBackupDetails = remember(backupDetails, searchQuery) {
+        val query = searchQuery.trim()
+        if (query.isEmpty()) {
+            backupDetails
+        } else {
+            backupDetails.filter { detail ->
+                detail.appInfo.name.contains(query, ignoreCase = true) ||
+                    detail.appInfo.packageName.contains(query, ignoreCase = true)
+            }
+        }
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -222,7 +240,31 @@ fun RestoreAppsConfigScreen(
                 )
             }
         } else {
-            val totalAppRows = backupDetails.size + 1
+            item(key = "apps_search") {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text(stringResource(R.string.search_apps)) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Outlined.Search,
+                            contentDescription = null
+                        )
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Close,
+                                    contentDescription = stringResource(R.string.cd_clear_search)
+                                )
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
             item(key = "apps_header") {
                 SortableSectionHeader(
                     title = stringResource(R.string.apps_to_restore_title),
@@ -230,25 +272,37 @@ fun RestoreAppsConfigScreen(
                     onSortOrderChange = viewModel::setSortOrder
                 )
             }
-            item(key = "apps_select_all") {
-                ExpressiveSegmentedSurface(index = 0, count = totalAppRows) {
-                    io.github.hddq.restoid.ui.shared.SelectAllListItem(
-                        isChecked = isAllSelected,
-                        subtitle = buildSelectedRestoreTypesSummary(selectableBackupDetails, appRestoreTypes, restoreTypes, context),
-                        onClick = { showBulkRestoreTypesSheet = true },
-                        onToggle = viewModel::toggleAllRestoreSelection
-                    )
+            if (filteredBackupDetails.isEmpty()) {
+                if (searchQuery.isNotBlank()) {
+                    item(key = "apps_no_results") {
+                        Text(
+                            stringResource(R.string.no_apps_match_search),
+                            modifier = Modifier.padding(16.dp)
+                        )
+                    }
                 }
-            }
-            itemsIndexed(backupDetails, key = { _, detail -> detail.appInfo.packageName }) { index, detail ->
-                ExpressiveSegmentedSurface(index = index + 1, count = totalAppRows) {
-                    RestoreAppListItem(
-                        detail = detail,
-                        allowDowngrade = allowDowngrade,
-                        restoreTypes = appRestoreTypes[detail.appInfo.packageName] ?: restoreTypes,
-                        onClick = { selectedAppPackageName = detail.appInfo.packageName },
-                        onToggle = { viewModel.toggleRestoreAppSelection(detail.appInfo.packageName) }
-                    )
+            } else {
+                val totalAppRows = filteredBackupDetails.size + 1
+                item(key = "apps_select_all") {
+                    ExpressiveSegmentedSurface(index = 0, count = totalAppRows) {
+                        io.github.hddq.restoid.ui.shared.SelectAllListItem(
+                            isChecked = isAllSelected,
+                            subtitle = buildSelectedRestoreTypesSummary(selectableBackupDetails, appRestoreTypes, restoreTypes, context),
+                            onClick = { showBulkRestoreTypesSheet = true },
+                            onToggle = viewModel::toggleAllRestoreSelection
+                        )
+                    }
+                }
+                itemsIndexed(filteredBackupDetails, key = { _, detail -> detail.appInfo.packageName }) { index, detail ->
+                    ExpressiveSegmentedSurface(index = index + 1, count = totalAppRows) {
+                        RestoreAppListItem(
+                            detail = detail,
+                            allowDowngrade = allowDowngrade,
+                            restoreTypes = appRestoreTypes[detail.appInfo.packageName] ?: restoreTypes,
+                            onClick = { selectedAppPackageName = detail.appInfo.packageName },
+                            onToggle = { viewModel.toggleRestoreAppSelection(detail.appInfo.packageName) }
+                        )
+                    }
                 }
             }
         }
