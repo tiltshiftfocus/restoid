@@ -51,11 +51,13 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.ListItemShapes
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedListItem
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -255,7 +257,7 @@ fun RestoreScreen(
                             if (selectAllContactAccounts) {
                                 contactsSummary
                             } else {
-                                "${context.getString(R.string.device_data_contacts)}: $contactsSummary"
+                                "${stringResource(R.string.device_data_contacts)}: $contactsSummary"
                             }
                         )
                     }
@@ -455,6 +457,7 @@ fun RestoreAppsConfigScreen(
                     }
                 }
             } else {
+                val totalAppRows = backupDetails.size + 1
                 item(key = "apps_select_all") {
                     io.github.hddq.restoid.ui.shared.SelectAllListItem(
                         isChecked = isAllSelected,
